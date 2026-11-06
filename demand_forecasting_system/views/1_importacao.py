@@ -90,12 +90,12 @@ def render():
             
             if "2. Substituir" in estrategia:
                 df_tratado = df_atual.copy()
-                # Calcula a média apenas dos dias com venda real
-                medias = df_tratado[df_tratado['quantidade_vendida'] > 0].groupby('SKU')['quantidade_vendida'].mean()
+                # CORREÇÃO: 'sku' em minúsculo conforme a base de dados
+                medias = df_tratado[df_tratado['quantidade_vendida'] > 0].groupby('sku')['quantidade_vendida'].mean()
                 
                 def aplicar_media(row):
                     if pd.isna(row['quantidade_vendida']) or row['quantidade_vendida'] <= 0:
-                        return medias.get(row['SKU'], 0)
+                        return medias.get(row['sku'], 0) # CORREÇÃO: 'sku' em minúsculo
                     return row['quantidade_vendida']
                     
                 df_tratado['quantidade_vendida'] = df_tratado.apply(aplicar_media, axis=1)
