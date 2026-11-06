@@ -2,11 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import os
-import sys
-
-# Caminhos robustos que funcionam na nuvem
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.abspath(os.path.join(BASE_DIR, '..')))
 from src.data_processor import DataProcessor
 
 def render():
@@ -49,6 +44,7 @@ def render():
             st.session_state['df_bruto'] = df_temp
             
     elif st.session_state['usar_demo']:
+        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
         demo_path = os.path.abspath(os.path.join(BASE_DIR, '..', 'data', 'demo_dataset.csv'))
         if os.path.exists(demo_path):
             with open(demo_path, 'rb') as f:
@@ -65,10 +61,10 @@ def render():
         st.markdown("---")
         st.subheader("🛠️ Painel de Tratamento de Anomalias e Ruturas")
         
-        # Assegurar formato de data correto
         df_atual['data'] = pd.to_datetime(df_atual['data'], errors='coerce')
+        # 2. RESOLUÇÃO DA BASE NÃO MUDAR: Força a conversão matemática para impedir que o "0" seja lido como texto
+        df_atual['quantidade_vendida'] = pd.to_numeric(df_atual['quantidade_vendida'], errors='coerce')
         
-        # Identificar anomalias criticamente logísticas
         mascara_zeros = df_atual['quantidade_vendida'] == 0
         mascara_negativos = df_atual['quantidade_vendida'] < 0
         mascara_nulos = df_atual['quantidade_vendida'].isna()
@@ -77,7 +73,6 @@ def render():
         
         if total_anomalias > 0:
             st.warning(f"⚠️ Foram encontradas {total_anomalias} anomalias na base de dados (vendas a zero, negativas ou nulas).")
-            st.markdown("Decida como o sistema deve interpretar estes dados antes de gerar as previsões:")
             
             estrategia = st.radio(
                 "Estratégia de Tratamento:",
@@ -90,24 +85,17 @@ def render():
             
             if "2. Substituir" in estrategia:
                 df_tratado = df_atual.copy()
-                
-                # 1. Calcula a média de cada SKU apenas onde houve venda real
                 medias = df_tratado[df_tratado['quantidade_vendida'] > 0].groupby('sku')['quantidade_vendida'].mean()
-                
-                # 2. Identifica exatamente as linhas problemáticas
                 mascara_invalidos = (df_tratado['quantidade_vendida'] <= 0) | (df_tratado['quantidade_vendida'].isna())
-                
-                # 3. Mapeia e injeta o valor médio exato por cima dos zeros
                 df_tratado.loc[mascara_invalidos, 'quantidade_vendida'] = df_tratado.loc[mascara_invalidos, 'sku'].map(medias)
-                
-                st.info("✅ Histórico de Tratamento: As anomalias foram substituídas pela média histórica de vendas de cada produto.")
+                st.info("✅ Histórico de Tratamento: As anomalias foram substituídas pela média histórica.")
                 
             elif "3. Remover" in estrategia:
                 df_tratado = df_atual[~mascara_zeros & ~mascara_negativos & ~mascara_nulos].copy()
                 st.info(f"✅ Histórico de Tratamento: {total_anomalias} linhas anómalas foram apagadas da base.")
             else:
                 df_tratado = df_atual.copy()
-                st.info("✅ Histórico de Tratamento: Os valores matemáticos originais foram mantidos.")
+                st.info("✅ Histórico de Tratamento: Os valores originais foram mantidos.")
         else:
             st.info("✅ A base de dados está íntegra e não apresenta anomalias graves de quantidade.")
             df_tratado = df_atual.copy()
@@ -116,6 +104,6 @@ def render():
         st.dataframe(df_tratado, use_container_width=True, height=400)
         
         if st.button("Confirmar e Guardar Base Tratada", type="primary"):
-            st.session_state['df_dados'] = df_tratado
+            st.session_state['df_dados'] = df_tratado.copy()
             st.success("Dados validados e guardados com sucesso! Pode avançar para o menu de Análise Histórica.")
             st.balloons()
