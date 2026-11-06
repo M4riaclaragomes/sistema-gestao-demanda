@@ -90,14 +90,16 @@ def render():
             
             if "2. Substituir" in estrategia:
                 df_tratado = df_atual.copy()
+                
+                # 1. Calcula a média de cada SKU apenas onde houve venda real
                 medias = df_tratado[df_tratado['quantidade_vendida'] > 0].groupby('sku')['quantidade_vendida'].mean()
                 
-                def aplicar_media(row):
-                    if pd.isna(row['quantidade_vendida']) or row['quantidade_vendida'] <= 0:
-                        return medias.get(row['sku'], 0)
-                    return row['quantidade_vendida']
-                    
-                df_tratado['quantidade_vendida'] = df_tratado.apply(aplicar_media, axis=1)
+                # 2. Identifica exatamente as linhas problemáticas
+                mascara_invalidos = (df_tratado['quantidade_vendida'] <= 0) | (df_tratado['quantidade_vendida'].isna())
+                
+                # 3. Mapeia e injeta o valor médio exato por cima dos zeros
+                df_tratado.loc[mascara_invalidos, 'quantidade_vendida'] = df_tratado.loc[mascara_invalidos, 'sku'].map(medias)
+                
                 st.info("✅ Histórico de Tratamento: As anomalias foram substituídas pela média histórica de vendas de cada produto.")
                 
             elif "3. Remover" in estrategia:
@@ -111,7 +113,6 @@ def render():
             df_tratado = df_atual.copy()
 
         st.markdown("### 📊 Visualizador da Base Completa")
-        # Mostra o dataframe inteiro com scroll ativado
         st.dataframe(df_tratado, use_container_width=True, height=400)
         
         if st.button("Confirmar e Guardar Base Tratada", type="primary"):
