@@ -4,8 +4,12 @@ import pandas as pd
 import os
 import sys
 
+# Ajuste absoluto e infalível de caminhos para a nuvem do Streamlit
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.abspath(os.path.join(BASE_DIR, '..')))
+ROOT_DIR = os.path.abspath(os.path.join(BASE_DIR, '..'))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR) # Força a pasta raiz a ser a prioridade número 1 nas buscas
+
 from src.eda import EDA
 from src.forecasting import ForecastEngine
 
@@ -18,7 +22,6 @@ def render():
         return
 
     df = st.session_state['df_dados']
-    # Garante a leitura da coluna independentemente de estar maiúscula ou minúscula
     df.columns = [c.lower() for c in df.columns]
     
     eda = EDA(df)
@@ -28,7 +31,7 @@ def render():
         sku_list = df['sku'].unique()
         sku = st.selectbox("Selecione o SKU para prever:", sku_list)
     with col2:
-        # CORREÇÃO: "Mensal" agora usa "ME" (Month End) para suportar o Pandas atualizado na nuvem
+        # A sigla 'ME' (Month End) é a correta para as versões novas do Pandas
         freq_map = {"Diária": "D", "Semanal": "W", "Mensal": "ME"}
         freq = st.selectbox("Frequência da Previsão:", list(freq_map.keys()), index=2)
         freq_code = freq_map[freq]
@@ -44,7 +47,6 @@ def render():
             
         series = df_agg.set_index('data')['quantidade_vendida']
         
-        # Sazonalidade adaptativa
         m = 12 if freq == "Mensal" else (7 if freq == "Diária" else 52)
         
         resultados = ForecastEngine.run_all(series, h, m=m)
@@ -56,7 +58,6 @@ def render():
         st.markdown("---")
         st.subheader(f"📊 Projeção para {sku}")
         
-        # Inicia com o Holt-Winters (se possível) para mostrar a curva mais completa
         modelos_disponiveis = list(resultados.keys())
         idx_padrao = modelos_disponiveis.index('Holt-Winters') if 'Holt-Winters' in modelos_disponiveis else 0
         modelo_selecionado = st.selectbox("Selecione o Modelo Estatístico:", modelos_disponiveis, index=idx_padrao)
@@ -65,13 +66,11 @@ def render():
         
         fig = go.Figure()
         
-        # Demanda Real
         fig.add_trace(go.Scatter(
             x=series.index, y=series.values, mode='lines+markers', 
             name='Demanda Real (Histórico)', line=dict(color='black', width=2)
         ))
         
-        # Ajuste do Modelo (Fitted) - Oculto por padrão para limpeza visual
         if fit is not None:
             fig.add_trace(go.Scatter(
                 x=series.index, y=fit, mode='lines', 
@@ -79,7 +78,6 @@ def render():
                 visible='legendonly'
             ))
         
-        # Previsão Futura
         last_date = series.index[-1]
         future_dates = pd.date_range(start=last_date, periods=h+1, freq=freq_code)[1:]
         
