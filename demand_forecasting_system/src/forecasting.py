@@ -7,12 +7,14 @@ warnings.filterwarnings("ignore")
 
 class ForecastEngine:
     @staticmethod
-    def naive(series, h): return series.shift(1).fillna(series.iloc[0]), np.repeat(series.iloc[-1], h)
+    def naive(series, h): 
+        return series.shift(1).fillna(series.iloc[0]), np.repeat(series.iloc[-1], h)
 
     @staticmethod
     def simple_moving_average(series, h, window=3):
         if len(series) < window: return None, None
-        fitted = series.rolling(window=window).mean().shift(1).fillna(method='bfill')
+        # CORREÇÃO: Utilizando .bfill() direto ao invés de fillna(method='bfill')
+        fitted = series.rolling(window=window).mean().shift(1).bfill()
         return fitted, np.repeat(fitted.iloc[-1], h)
 
     @staticmethod
