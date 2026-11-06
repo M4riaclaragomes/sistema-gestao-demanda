@@ -4,11 +4,9 @@ import pandas as pd
 import os
 import sys
 
-# Ajuste absoluto e infalível de caminhos para a nuvem do Streamlit
+# Revertido para o método de caminhos seguro que evita conflito com o /mount/src/ da nuvem
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT_DIR = os.path.abspath(os.path.join(BASE_DIR, '..'))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR) # Força a pasta raiz a ser a prioridade número 1 nas buscas
+sys.path.append(os.path.abspath(os.path.join(BASE_DIR, '..')))
 
 from src.eda import EDA
 from src.forecasting import ForecastEngine
@@ -31,7 +29,6 @@ def render():
         sku_list = df['sku'].unique()
         sku = st.selectbox("Selecione o SKU para prever:", sku_list)
     with col2:
-        # A sigla 'ME' (Month End) é a correta para as versões novas do Pandas
         freq_map = {"Diária": "D", "Semanal": "W", "Mensal": "ME"}
         freq = st.selectbox("Frequência da Previsão:", list(freq_map.keys()), index=2)
         freq_code = freq_map[freq]
