@@ -1,84 +1,125 @@
 import streamlit as st
+import plotly.graph_objects as go
 import pandas as pd
+import numpy as np
 import os
 import sys
-import plotly.graph_objects as go
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Mapeamento de caminhos robusto para o servidor Linux do Streamlit
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PARENT_DIR = os.path.abspath(os.path.join(CURRENT_DIR, '..'))
+if PARENT_DIR not in sys.path:
+    sys.path.append(PARENT_DIR)
+
 from src.eda import ExploratoryDataAnalysis
 from src.forecasting import ForecastEngine
-from src.evaluator import ForecastEvaluator
 
 def render():
-    st.title("🏆 Módulo 4 e 5: Comparação e Validação")
-    
-    if st.session_state.get('df_dados') is None:
-        st.warning("⚠️ Nenhuma base de dados encontrada.")
-        st.stop()
-        
-    with st.expander("📖 Entenda os Indicadores de Erro"):
-        st.markdown("""
-        * **MAE (Erro Absoluto Médio):** A média da diferença absoluta entre o previsto e o real. (Ex: Errou por 5 unidades em média).
-        * **RMSE (Raiz do Erro Quadrático Médio):** Penaliza erros muito grandes (outliers).
-        * **MAPE (%):** Erro percentual médio. (Ex: Errou por 15% em média). Pode falhar matematicamente se houver demanda zerada.
-        * **WAPE (%):** Erro percentual ponderado pelo volume. Excelente para logística, pois lida perfeitamente com períodos zerados.
-        * **Viés (Bias):** Se positivo, o modelo está **superestimando** (prevê mais do que vende). Se negativo, está **subestimando** (risco de ruptura).
-        """)
+    st.title("🏆 Módulo 4: Comparação de Modelos")
+    st.markdown("Avalie a precisão de diferentes algoritmos para descobrir qual se ajusta melhor ao seu produto.")
 
-    df_dados = st.session_state['df_dados']
-    eda = ExploratoryDataAnalysis(df_dados)
-    skus = eda.get_skus()
+    if 'df_dados' not in st.session_state or st.session_state['df_dados'] is None:
+        st.warning("⚠️ Nenhuma base de dados encontrada. Por favor, volte ao Módulo 1 e carregue os dados.")
+        return
+
+    df = st.session_state['df_dados']
+    df.columns = [c.lower() for c in df.columns]
     
+    eda = ExploratoryDataAnalysis(df)
+
     col1, col2, col3 = st.columns(3)
-    with col1: sku = st.selectbox("Produto (SKU):", skus, key='cmp_sku')
+    with col1:
+        sku_list = df['sku'].unique()
+        sku = st.selectbox("Selecione o SKU para análise:", sku_list)
     with col2:
-        frequencia = st.selectbox("Granularidade:", ["Mensal (M)", "Semanal (W-MON)", "Diária (D)"], key='cmp_freq')
-        freq_code = frequencia.split("(")[1].replace(")", "")
-    with col3: metrica_alvo = st.selectbox("Métrica para Classificação (Ranking):", ["WAPE (%)", "MAPE (%)", "MAE", "RMSE"])
+        # CORREÇÃO: "Mensal" agora usa "ME" para compatibilidade com o Pandas atualizado
+        freq_map = {"Diária": "D", "Semanal": "W", "Mensal": "ME"}
+        freq = st.selectbox("Frequência:", list(freq_map.keys()), index=2)
+        freq_code = freq_map[freq]
+    with col3:
+        h = st.number_input("Horizonte (Quantos períodos prever?):", min_value=1, max_value=365, value=12)
 
-    if st.button("Executar Backtesting e Comparar Modelos", type="primary"):
-        with st.spinner("Executando modelos estatísticos..."):
-            df_agg = eda.agregar_dados(sku, frequencia=freq_code)
-            series = df_agg.set_index('data')['quantidade_vendida']
-            sazonalidade_m = 12 if freq_code == 'M' else (52 if 'W' in freq_code else 7)
+    if st.button("Executar Batalha de Modelos", type="primary"):
+        df_agg = eda.agregar_dados(sku, frequencia=freq_code)
+        
+        if len(df_agg) < 3:
+            st.error("Histórico insuficiente para previsões estatísticas (mínimo de 3 períodos).")
+            return
             
-            n = len(series)
-            test_size = min(max(int(n * 0.2), 3), 12)
-            train_size = n - test_size
-            
-            if train_size < 10:
-                st.error("Histórico muito curto para realizar o backtesting.")
-                st.stop()
+        series = df_agg.set_index('data')['quantidade_vendida']
+        m = 12 if freq == "Mensal" else (7 if freq == "Diária" else 52)
+        
+        resultados = ForecastEngine.run_all(series, h, m=m)
+        
+        if not resultados:
+            st.error("Erro ao calcular modelos estatísticos.")
+            return
+
+        st.markdown("---")
+        st.subheader(f"📊 Ranking de Precisão para {sku}")
+
+        # Calcular métricas de erro histórico (in-sample)
+        metricas = []
+        for nome, (fit, fcast) in resultados.items():
+            if fit is not None:
+                erro = series - fit
+                mae = np.mean(np.abs(erro))
+                rmse = np.sqrt(np.mean(erro**2))
                 
-            train_series, test_series = series.iloc[:train_size], series.iloc[train_size:]
-            resultados = ForecastEngine.run_all(train_series, h=test_size, m=sazonalidade_m)
-            
-            tabela_erros = []
-            for nome_modelo, (fitted, fcast) in resultados.items():
-                metricas = ForecastEvaluator.calculate_metrics(test_series.values, fcast)
-                linha = {'Modelo': nome_modelo, 'fcast': fcast}
-                linha.update(metricas)
-                tabela_erros.append(linha)
+                # Evitar divisão por zero no cálculo do MAPE
+                series_safe = np.where(series == 0, 1e-9, series)
+                mape = np.mean(np.abs(erro / series_safe)) * 100
                 
-            df_erros = pd.DataFrame(tabela_erros).sort_values(by=metrica_alvo).reset_index(drop=True)
-            melhor_modelo = df_erros.iloc[0]['Modelo']
+                metricas.append({
+                    "Modelo": nome,
+                    "MAE (Erro Médio Absoluto)": mae,
+                    "RMSE (Raiz do Erro Quadrático)": rmse,
+                    "MAPE (%)": mape
+                })
+        
+        # Cria a tabela ordenada do menor erro (melhor) para o maior (pior)
+        df_metricas = pd.DataFrame(metricas).sort_values("MAE (Erro Médio Absoluto)").reset_index(drop=True)
+        
+        # Formatação limpa para exibição
+        df_display = df_metricas.copy()
+        df_display["MAE (Erro Médio Absoluto)"] = df_display["MAE (Erro Médio Absoluto)"].round(2)
+        df_display["RMSE (Raiz do Erro Quadrático)"] = df_display["RMSE (Raiz do Erro Quadrático)"].round(2)
+        df_display["MAPE (%)"] = df_display["MAPE (%)"].round(2).astype(str) + "%"
+        
+        st.dataframe(df_display, use_container_width=True)
+        
+        melhor_modelo = df_metricas.iloc[0]["Modelo"]
+        st.success(f"🏆 **Vencedor:** O modelo **{melhor_modelo}** apresentou a menor margem de erro na simulação do passado.")
+        
+        # Gráfico comparativo visual
+        st.markdown("### 📈 Visualização das Previsões (Top 3)")
+        
+        fig = go.Figure()
+        
+        # Demanda Real Histórica
+        fig.add_trace(go.Scatter(
+            x=series.index, y=series.values, mode='lines+markers', 
+            name='Demanda Real (Passado)', line=dict(color='black', width=3)
+        ))
+        
+        last_date = series.index[-1]
+        future_dates = pd.date_range(start=last_date, periods=h+1, freq=freq_code)[1:]
+        
+        # Desenha as linhas apenas dos 3 melhores modelos para não poluir o gráfico
+        top_3 = df_metricas.head(3)["Modelo"].tolist()
+        cores = ['#00b050', '#0070c0', '#ffc000']
+        
+        for i, modelo in enumerate(top_3):
+            _, fcast = resultados[modelo]
+            fig.add_trace(go.Scatter(
+                x=future_dates, y=fcast, mode='lines', 
+                name=f'{i+1}º - {modelo}', 
+                line=dict(color=cores[i], width=2 if i > 0 else 3, dash='solid' if i == 0 else 'dash')
+            ))
             
-            st.success("Análise concluída!")
-            st.info(f"💡 **Recomendação:** O método **{melhor_modelo}** apresentou o melhor desempenho (menor {metrica_alvo}).")
-            
-            cols_format = {'MAE': '{:.2f}', 'MSE': '{:.2f}', 'RMSE': '{:.2f}', 'MAPE (%)': '{:.2f}%', 'WAPE (%)': '{:.2f}%', 'Viés (Bias)': '{:.2f}', 'Tracking Signal': '{:.2f}'}
-            st.dataframe(df_erros.drop(columns=['fcast']).style.format(cols_format), use_container_width=True)
-            
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=series.index, y=series.values, mode='lines', name='Realizado', line=dict(color='black', width=3)))
-            
-            # Adiciona os modelos ao gráfico, mas esconde todos (legendonly) exceto o melhor modelo
-            for idx, row in df_erros.iterrows():
-                nome = row['Modelo']
-                fcast = row['fcast']
-                visibilidade = True if nome == melhor_modelo else 'legendonly'
-                fig.add_trace(go.Scatter(x=test_series.index, y=fcast, mode='lines+markers', name=nome, visible=visibilidade))
-            
-            fig.add_vline(x=test_series.index[0], line_width=2, line_dash="dash", line_color="red")
-            fig.update_layout(template='plotly_white', hovermode='x unified', title="Validação Temporal (Do marco vermelho em diante é o passado desconhecido)")
-            st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=dict(l=0, r=0, t=50, b=0)
+        )
+        st.plotly_chart(fig, use_container_width=True)
