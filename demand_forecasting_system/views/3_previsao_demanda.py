@@ -1,6 +1,14 @@
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
+import os
+import sys
+
+# Mapeamento absoluto e forçado: obriga o servidor a olhar para a pasta principal antes de importar
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PARENT_DIR = os.path.abspath(os.path.join(CURRENT_DIR, '..'))
+if PARENT_DIR not in sys.path:
+    sys.path.append(PARENT_DIR)
 
 from src.eda import EDA
 from src.forecasting import ForecastEngine
