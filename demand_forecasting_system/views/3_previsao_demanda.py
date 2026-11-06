@@ -1,12 +1,6 @@
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
-import os
-import sys
-
-# Revertido para o método de caminhos seguro que evita conflito com o /mount/src/ da nuvem
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.abspath(os.path.join(BASE_DIR, '..')))
 
 from src.eda import EDA
 from src.forecasting import ForecastEngine
@@ -92,11 +86,11 @@ def render():
         
         with st.expander("📖 Entenda os Modelos Estatísticos"):
             st.markdown("""
-            * **Naive (Ingênuo):** O modelo mais básico. Assume que o futuro será exatamente igual ao último período. Ideal para produtos intermitentes.
+            * **Naive (Ingênuo):** Assume que o futuro será igual ao último período.
             * **Média Móvel:** Suaviza picos e quedas. Funciona bem para perfis altamente estáveis.
-            * **SES (Suavização Exponencial Simples):** Dá mais peso aos dados recentes e esquece o passado distante.
-            * **Holt:** Identifica se o produto tem uma tendência clara (se as vendas estão a subir ou a descer).
-            * **Holt-Winters:** O mais avançado. Identifica tendência E sazonalidade (ex: vende mais no Natal).
-            * **Regressão:** Cria uma linha reta de tendência matemática baseada em todo o histórico.
-            * **Croston:** Algoritmo especial para logística de peças de reparo e itens com muitos dias de venda zerada.
+            * **SES:** Dá mais peso aos dados recentes e esquece o passado distante.
+            * **Holt:** Identifica se o produto tem uma tendência clara de subida ou descida.
+            * **Holt-Winters:** Identifica tendência E sazonalidade (ex: vende mais no Natal).
+            * **Regressão:** Cria uma linha reta matemática baseada em todo o histórico.
+            * **Croston:** Algoritmo especial para itens intermitentes e peças de reparo.
             """)
