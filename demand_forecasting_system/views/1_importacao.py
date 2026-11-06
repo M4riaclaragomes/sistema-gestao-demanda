@@ -90,12 +90,11 @@ def render():
             
             if "2. Substituir" in estrategia:
                 df_tratado = df_atual.copy()
-                # CORREÇÃO: 'sku' em minúsculo conforme a base de dados
                 medias = df_tratado[df_tratado['quantidade_vendida'] > 0].groupby('sku')['quantidade_vendida'].mean()
                 
                 def aplicar_media(row):
                     if pd.isna(row['quantidade_vendida']) or row['quantidade_vendida'] <= 0:
-                        return medias.get(row['sku'], 0) # CORREÇÃO: 'sku' em minúsculo
+                        return medias.get(row['sku'], 0)
                     return row['quantidade_vendida']
                     
                 df_tratado['quantidade_vendida'] = df_tratado.apply(aplicar_media, axis=1)
@@ -111,8 +110,9 @@ def render():
             st.info("✅ A base de dados está íntegra e não apresenta anomalias graves de quantidade.")
             df_tratado = df_atual.copy()
 
-        st.markdown("### 📊 Pré-Visualização da Base Final")
-        st.dataframe(df_tratado.head(10), use_container_width=True)
+        st.markdown("### 📊 Visualizador da Base Completa")
+        # Mostra o dataframe inteiro com scroll ativado
+        st.dataframe(df_tratado, use_container_width=True, height=400)
         
         if st.button("Confirmar e Guardar Base Tratada", type="primary"):
             st.session_state['df_dados'] = df_tratado
