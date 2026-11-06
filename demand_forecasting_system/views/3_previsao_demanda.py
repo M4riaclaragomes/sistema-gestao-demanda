@@ -9,7 +9,6 @@ PARENT_DIR = os.path.abspath(os.path.join(CURRENT_DIR, '..'))
 if PARENT_DIR not in sys.path:
     sys.path.append(PARENT_DIR)
 
-# Importando os nomes exatos contidos nos seus arquivos
 from src.eda import ExploratoryDataAnalysis
 from src.forecasting import ForecastEngine
 
@@ -37,19 +36,36 @@ def render():
     with col3:
         h = st.number_input("Horizonte (Quantos períodos para frente?):", min_value=1, max_value=365, value=12)
 
+    # 1. Quando o botão é clicado, ativamos a "memória" do Streamlit
     if st.button("Gerar Previsão Matemática", type="primary"):
-        df_agg = eda.agregar_dados(sku, frequencia=freq_code)
+        st.session_state['mostrar_grafico_aba3'] = True
+        st.session_state['parametros_aba3'] = (sku, freq_code, h)
+
+    # 2. Se a memória estiver ativa para estes exatos parâmetros, mostramos o gráfico
+    if st.session_state.get('mostrar_grafico_aba3') and st.session_state.get('parametros_aba3') == (sku, freq_code, h):
         
-        if len(df_agg) < 3:
-            st.error("Histórico insuficiente para previsões estatísticas (mínimo de 3 períodos).")
-            return
+        # 3. Só calculamos a matemática pesada 1 vez e guardamos na memória. 
+        # Assim, trocar de modelo no selectbox fica instantâneo!
+        if 'resultados_aba3' not in st.session_state or st.session_state.get('parametros_calculados_aba3') != (sku, freq_code, h):
+            df_agg = eda.agregar_dados(sku, frequencia=freq_code)
             
-        series = df_agg.set_index('data')['quantidade_vendida']
-        
-        m = 12 if freq == "Mensal" else (7 if freq == "Diária" else 52)
-        
-        resultados = ForecastEngine.run_all(series, h, m=m)
-        
+            if len(df_agg) < 3:
+                st.error("Histórico insuficiente para previsões estatísticas (mínimo de 3 períodos).")
+                st.session_state['mostrar_grafico_aba3'] = False
+                return
+                
+            series = df_agg.set_index('data')['quantidade_vendida']
+            m = 12 if freq == "Mensal" else (7 if freq == "Diária" else 52)
+            
+            # Guarda as contas na sessão
+            st.session_state['resultados_aba3'] = ForecastEngine.run_all(series, h, m=m)
+            st.session_state['series_aba3'] = series
+            st.session_state['parametros_calculados_aba3'] = (sku, freq_code, h)
+
+        # Recupera os dados da memória
+        resultados = st.session_state['resultados_aba3']
+        series = st.session_state['series_aba3']
+
         if not resultados:
             st.error("Erro ao calcular modelos estatísticos.")
             return
@@ -59,6 +75,8 @@ def render():
         
         modelos_disponiveis = list(resultados.keys())
         idx_padrao = modelos_disponiveis.index('Holt-Winters') if 'Holt-Winters' in modelos_disponiveis else 0
+        
+        # Como o selectbox agora está fora do botão, interagir com ele não quebra a tela!
         modelo_selecionado = st.selectbox("Selecione o Modelo Estatístico:", modelos_disponiveis, index=idx_padrao)
         
         fit, fcast = resultados[modelo_selecionado]
@@ -102,3 +120,7 @@ def render():
             * **Regressão:** Cria uma linha reta matemática baseada em todo o histórico.
             * **Croston:** Algoritmo especial para itens intermitentes e peças de reparo.
             """)
+    else:
+        # Se você alterar o produto ou a frequência antes de clicar no botão novamente, ele fecha o gráfico antigo por segurança
+        if 'mostrar_grafico_aba3' in st.session_state:
+            st.session_state['mostrar_grafico_aba3'] = False
