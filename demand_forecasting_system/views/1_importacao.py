@@ -3,7 +3,9 @@ import pandas as pd
 import os
 import sys
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Caminhos robustos que funcionam na nuvem
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.abspath(os.path.join(BASE_DIR, '..')))
 from src.data_processor import DataProcessor
 
 def render():
@@ -15,7 +17,6 @@ def render():
 
     processor = DataProcessor()
 
-    # --- CORREÇÃO: Memória de estado para o botão da demo ---
     if 'usar_demo' not in st.session_state:
         st.session_state['usar_demo'] = False
 
@@ -29,14 +30,13 @@ def render():
         st.subheader("Utilizar Base de Demonstração")
         st.markdown("Carregue a base contendo os 5 perfis estatísticos (Estável, Crescente, Sazonal, Irregular e Intermitente).")
         if st.button("Carregar Dados de Demonstração", type="primary"):
-            st.session_state['usar_demo'] = True # Memoriza que o usuário quer usar a demo
+            st.session_state['usar_demo'] = True 
 
     df_bruto = None
     origem = ""
 
-    # Lógica de carregamento corrigida
     if arquivo_upload is not None:
-        st.session_state['usar_demo'] = False # Reseta a demo caso faça upload de arquivo
+        st.session_state['usar_demo'] = False 
         tipo = arquivo_upload.name.split('.')[-1]
         df_bruto, msg = processor.carregar_arquivo(arquivo_upload, tipo)
         if df_bruto is None:
@@ -45,7 +45,8 @@ def render():
             origem = "Arquivo Próprio"
             
     elif st.session_state['usar_demo']:
-        demo_path = 'data/demo_dataset.csv'
+        # Ajuste aqui para encontrar a pasta 'data' independentemente do nível do repositório
+        demo_path = os.path.abspath(os.path.join(BASE_DIR, '..', 'data', 'demo_dataset.csv'))
         if os.path.exists(demo_path):
             with open(demo_path, 'rb') as f:
                 df_bruto, msg = processor.carregar_arquivo(f, 'csv')
