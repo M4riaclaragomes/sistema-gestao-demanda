@@ -3,8 +3,10 @@ import sys
 import importlib.util
 import streamlit as st
 
-# Identifica a pasta exata onde o app.py está, resolvendo o problema de pastas no GitHub
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 1. RESOLUÇÃO DEFINITIVA DO IMPORTERROR: Injeta a pasta raiz no sistema de forma global
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+if ROOT_DIR not in sys.path:
+    sys.path.append(ROOT_DIR)
 
 def load_module(module_name, filepath):
     if not os.path.exists(filepath):
@@ -33,8 +35,7 @@ def main():
     st.sidebar.markdown("Navegação:")
     selection = st.sidebar.radio("", list(PAGES.keys()))
     
-    # Constrói o caminho correto independentemente da subpasta no GitHub
-    filepath = os.path.join(BASE_DIR, PAGES[selection])
+    filepath = os.path.join(ROOT_DIR, PAGES[selection])
     view_module = load_module("view_module", filepath)
     
     if view_module:
