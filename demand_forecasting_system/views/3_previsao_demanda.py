@@ -4,13 +4,13 @@ import pandas as pd
 import os
 import sys
 
-# Mapeamento absoluto e forçado: obriga o servidor a olhar para a pasta principal antes de importar
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PARENT_DIR = os.path.abspath(os.path.join(CURRENT_DIR, '..'))
 if PARENT_DIR not in sys.path:
     sys.path.append(PARENT_DIR)
 
-from src.eda import EDA
+# Importando os nomes exatos contidos nos seus arquivos
+from src.eda import ExploratoryDataAnalysis
 from src.forecasting import ForecastEngine
 
 def render():
@@ -24,7 +24,7 @@ def render():
     df = st.session_state['df_dados']
     df.columns = [c.lower() for c in df.columns]
     
-    eda = EDA(df)
+    eda = ExploratoryDataAnalysis(df)
 
     col1, col2, col3 = st.columns(3)
     with col1:
