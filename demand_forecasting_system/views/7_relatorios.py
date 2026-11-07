@@ -1,94 +1,137 @@
-import streamlit as st
+from datetime import datetime
+
+import numpy as np
 import pandas as pd
-import os
-import sys
+import plotly.graph_objects as go
+import streamlit as st
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from src.eda import ExploratoryDataAnalysis
-from src.forecasting import ForecastEngine
-from src.evaluator import ForecastEvaluator
+from src import services, ui
 
-def gerar_texto_recomendacao(classe_demanda, metricas_erro, melhor_modelo):
+ui.hero(
+    "Relatórios e laudos",
+    "O sistema analisa o histórico, executa o backtesting de todos os modelos e redige um laudo gerencial "
+    "automático — pronto para embasar reuniões de S&OP.",
+    eyebrow="Módulo 10 · Gestão",
+)
+df = ui.require_data()
+skus = sorted(df["sku"].unique())
+
+
+def recomendacoes(classe: str, met: dict, modelo: str, total_real: float) -> list[str]:
     rec = []
-    if "Crescente" in classe_demanda: rec.append("O produto apresenta tendência clara de crescimento nos últimos períodos.")
-    elif "Estável" in classe_demanda: rec.append("A demanda é estável. Modelos baseados em Média Móvel ou Suavização Simples tendem a performar muito bem.")
-    elif "Intermitente" in classe_demanda: rec.append("Demanda intermitente detectada (muitas vendas zeradas). O uso do método de Croston e análise via WAPE são altamente recomendados.")
-        
-    bias = metricas_erro.get('Viés (Bias)', 0)
-    mae = metricas_erro.get('MAE', 1)
-    
-    if bias > (mae * 1.5): 
-        rec.append("⚠️ O modelo apresenta tendência de **superestimar** a demanda, o que pode gerar excesso de estoque.")
-    elif bias < -(mae * 1.5): 
-        rec.append("⚠️ O modelo apresenta tendência de **subestimar** a demanda, aumentando o risco de ruptura e venda perdida.")
-        
-    rec.append(f"🎯 Com base no rigoroso backtesting executado, recomenda-se a adoção imediata do método **{melhor_modelo}** para o planejamento futuro.")
-    return " ".join(rec)
+    textos = {
+        "Crescente": "O produto apresenta <b>tendência clara de crescimento</b>; revise níveis de estoque de segurança e capacidade de reposição.",
+        "Decrescente": "O produto apresenta <b>tendência de queda</b>; avalie redução de compras e risco de obsolescência.",
+        "Estável": "A demanda é <b>estável</b>; modelos de média móvel ou suavização simples tendem a performar muito bem.",
+        "Intermitente": "Demanda <b>intermitente</b> (muitos períodos zerados); o método de Croston e o WAPE são os mais indicados.",
+        "Irregular": "Demanda <b>irregular</b>, com picos; considere estoque de segurança maior e revisão frequente do plano.",
+        "Sazonal/Variável": "Demanda com <b>variação moderada/sazonal</b>; antecipe a cobertura para os períodos de pico.",
+    }
+    if classe in textos:
+        rec.append(textos[classe])
+    bias_pct = met.get("Viés (Bias)", 0) / total_real * 100 if total_real else 0
+    if bias_pct > 5:
+        rec.append(f"⚠️ O modelo tende a <b>superestimar</b> a demanda ({ui.fmt_pct(bias_pct, signed=True)}) — risco de excesso de estoque.")
+    elif bias_pct < -5:
+        rec.append(f"⚠️ O modelo tende a <b>subestimar</b> a demanda ({ui.fmt_pct(bias_pct, signed=True)}) — risco de ruptura e venda perdida.")
+    else:
+        rec.append(f"O viés do modelo está <b>sob controle</b> ({ui.fmt_pct(bias_pct, signed=True)} do volume real no teste).")
+    rec.append(f"🎯 Com base no backtesting, recomenda-se adotar o método <b>{modelo}</b> no planejamento.")
+    return rec
 
-def render():
-    st.title("📑 Módulo 10: Relatórios e Laudos")
-    
-    if st.session_state.get('df_dados') is None:
-        st.warning("⚠️ Nenhuma base de dados encontrada. Retorne ao Módulo 1.")
-        st.stop()
-        
-    st.markdown("Nesta área, a inteligência do sistema analisa todos os dados em segundo plano e gera um laudo gerencial escrito automaticamente, pronto para basear suas reuniões de S&OP.")
-    
-    df_dados = st.session_state['df_dados']
-    eda = ExploratoryDataAnalysis(df_dados)
-    
-    sku = st.selectbox("Selecione o SKU para gerar o Laudo:", eda.get_skus())
-    
-    if st.button("Gerar Laudo Gerencial", type="primary"):
-        with st.spinner("Analisando histórico, rodando backtesting e compilando laudo..."):
-            df_agg = eda.agregar_dados(sku, frequencia='W-MON')
-            indicadores = eda.calcular_indicadores(df_agg)
-            classe_demanda, _ = eda.classificar_comportamento(indicadores)
-            
-            series = df_agg.set_index('data')['quantidade_vendida']
+
+tab1, tab2 = st.tabs([":material/description: Laudo por produto", ":material/inventory: Visão do portfólio"])
+
+with tab1:
+    with st.container(border=True):
+        c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
+        sku = c1.selectbox("Produto para o laudo", skus, key="rel_sku")
+        gerar = c2.button("Gerar laudo", type="primary", icon=":material/auto_awesome:", width="stretch")
+    if gerar:
+        st.session_state["rel_gerado"] = sku
+
+    if st.session_state.get("rel_gerado") != sku:
+        st.info("Selecione o produto e clique em **Gerar laudo**.", icon=":material/touch_app:")
+    else:
+        with st.status("Compilando laudo…", expanded=False) as status:
+            st.write("Agregando histórico semanal…")
+            series = services.series_for(df, sku, "W")
+            ind, classe, motivo = services.profile(df, sku, "W")
+            st.write("Executando backtesting de 7 modelos…")
             n = len(series)
-            test_size = min(max(int(n * 0.2), 3), 12)
-            train_size = n - test_size
-            train, test = series.iloc[:train_size], series.iloc[train_size:]
-            
-            resultados = ForecastEngine.run_all(train, h=len(test), m=52)
-            
-            melhor_wape = float('inf')
-            melhor_modelo = "Nenhum"
-            melhores_metricas = {}
-            
-            for nome, (fit, fcast) in resultados.items():
-                metricas = ForecastEvaluator.calculate_metrics(test.values, fcast)
-                if not pd.isna(metricas['WAPE (%)']) and metricas['WAPE (%)'] < melhor_wape:
-                    melhor_wape = metricas['WAPE (%)']
-                    melhor_modelo = nome
-                    melhores_metricas = metricas
-                    
-            texto_laudo = gerar_texto_recomendacao(classe_demanda, melhores_metricas, melhor_modelo)
-            
-            st.markdown("---")
-            st.subheader(f"📋 Laudo Automático: {sku}")
-            st.info(texto_laudo)
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("#### 📊 Resumo Histórico")
-                st.write(f"- **Volume Total:** {indicadores['total']:,.0f} unid.")
-                st.write(f"- **Média por Período:** {indicadores['media']:,.1f} unid.")
-                st.write(f"- **Coef. Variação (CV):** {indicadores['cv']:.2f}")
-                st.write(f"- **Perfil Logístico:** {classe_demanda}")
-            with col2:
-                st.markdown("#### 🎯 Performance do Modelo")
-                st.write(f"- **Modelo Campeão:** {melhor_modelo}")
-                st.write(f"- **Acurácia Validada (WAPE):** {melhores_metricas.get('WAPE (%)', 0):.2f}%")
-                st.write(f"- **Viés Geral:** {melhores_metricas.get('Viés (Bias)', 0):.2f}")
-            
-            st.markdown("---")
-            st.markdown("#### 📥 Exportação de Dados")
-            csv = df_agg.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="Baixar Base Histórica Deste Produto (CSV)",
-                data=csv,
-                file_name=f'historico_{sku}.csv',
-                mime='text/csv',
-            )
+            h_bt = min(max(int(n * 0.2), 3), 12)
+            metricas, fcasts, train, test = services.backtest(series, h_bt, 52)
+            melhor = metricas.iloc[0].to_dict() if not metricas.empty else {}
+            modelo = melhor.get("Modelo", "—")
+            st.write("Projetando as próximas 12 semanas…")
+            proj = services.run_models(series, 12, 52).get(modelo, {}).get("forecast", np.zeros(12))
+            status.update(label="Laudo pronto", state="complete")
+
+        st.html(
+            f'<div class="gd-report">'
+            f'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">'
+            f'<div><div class="gd-card-title">Laudo automático · {datetime.now():%d/%m/%Y %H:%M}</div>'
+            f'<div style="font-size:1.4rem;font-weight:800;color:#0F172A;letter-spacing:-.02em">{ui._e(sku)}</div></div>'
+            f'<div style="display:flex;gap:8px">{ui.badge_html("Perfil: " + classe, ui.PROFILE_TONE.get(classe, "slate"))}'
+            f'{ui.badge_html("Modelo: " + str(modelo), "teal")}</div></div>'
+            f'<h4 style="margin-top:1rem">Recomendações</h4><ul>{"".join(f"<li>{r}</li>" for r in recomendacoes(classe, melhor, modelo, float(test.sum())))}</ul></div>'
+        )
+        st.write("")
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("Volume total", ui.fmt_int(ind["total"]))
+        k2.metric("Média semanal", ui.fmt_num(ind["media"]))
+        k3.metric("CV", ui.fmt_num(ind["cv"], 2))
+        k4.metric("Acurácia validada", ui.fmt_pct(100 - melhor.get("WAPE (%)", np.nan)), help="100% − WAPE no teste cego")
+        k5.metric("Previsão 12 semanas", ui.fmt_int(proj.sum()))
+
+        datas = services.future_index(series, 12, "W")
+        hist = series.iloc[-52:]
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=hist.index, y=hist.values, name="Últimas 52 semanas", line=dict(color="#334155", width=2)))
+        fig.add_trace(go.Scatter(x=[hist.index[-1], *datas], y=[hist.values[-1], *proj], name=f"Projeção · {modelo}", line=dict(color=ui.ACCENT, width=3)))
+        ui.chart(fig, height=340)
+
+        resumo = pd.DataFrame([
+            {"Indicador": "SKU", "Valor": sku}, {"Indicador": "Perfil", "Valor": classe}, {"Indicador": "Motivo", "Valor": motivo},
+            {"Indicador": "Volume total", "Valor": ind["total"]}, {"Indicador": "Média semanal", "Valor": round(ind["media"], 2)},
+            {"Indicador": "Coef. variação", "Valor": round(ind["cv"], 3)}, {"Indicador": "Crescimento (%)", "Valor": round(ind["crescimento_pct"], 2)},
+            {"Indicador": "Modelo recomendado", "Valor": modelo}, {"Indicador": "WAPE (%)", "Valor": round(melhor.get("WAPE (%)", np.nan), 2)},
+        ])
+        resumo["Valor"] = resumo["Valor"].astype(str)
+        previsao = pd.DataFrame({"Semana": datas, "Previsão": np.round(proj)})
+        c1, c2, c3 = st.columns(3)
+        c1.download_button("Laudo completo (Excel)", services.to_excel({"Resumo": resumo, "Metricas": metricas, "Previsao": previsao, "Historico": series.reset_index()}),
+                           f"laudo_{sku}.xlsx", icon=":material/download:", type="primary", width="stretch")
+        c2.download_button("Histórico semanal (CSV)", series.reset_index().to_csv(index=False).encode("utf-8"), f"historico_{sku}.csv", "text/csv",
+                           icon=":material/csv:", width="stretch")
+        texto = f"LAUDO DE DEMANDA — {sku}\nGerado em {datetime.now():%d/%m/%Y %H:%M}\n\n" + "\n".join(
+            "- " + r.replace("<b>", "").replace("</b>", "") for r in recomendacoes(classe, melhor, modelo, float(test.sum())))
+        c3.download_button("Laudo em texto (TXT)", texto.encode("utf-8"), f"laudo_{sku}.txt", "text/plain", icon=":material/article:", width="stretch")
+
+with tab2:
+    st.markdown('<div class="gd-muted">Backtesting consolidado de todos os produtos (base semanal) com o modelo vencedor de cada um.</div>', unsafe_allow_html=True)
+    rows = []
+    prog = st.progress(0, text="Avaliando portfólio…")
+    for i, s in enumerate(skus):
+        serie = services.series_for(df, s, "W")
+        _, classe, _ = services.profile(df, s, "W")
+        modelo, met = services.best_model(serie, "W")
+        top = met.iloc[0] if not met.empty else {}
+        rows.append({"SKU": s, "Perfil": classe, "Modelo recomendado": modelo or "—",
+                     "Acurácia (%)": float(100 - top["WAPE (%)"]) if len(top) else np.nan,
+                     "Viés": float(top["Viés (Bias)"]) if len(top) else np.nan,
+                     "Volume 52 sem.": float(serie.tail(52).sum()), "Tendência": serie.tail(52).tolist()})
+        prog.progress((i + 1) / len(skus), text=f"Avaliando {s}…")
+    prog.empty()
+    port = pd.DataFrame(rows)
+    st.dataframe(
+        port, hide_index=True, width="stretch",
+        column_config={
+            "Acurácia (%)": st.column_config.ProgressColumn("Acurácia", min_value=0, max_value=100, format="%.1f%%"),
+            "Viés": st.column_config.NumberColumn(format="%.0f"),
+            "Volume 52 sem.": st.column_config.NumberColumn(format="localized"),
+            "Tendência": st.column_config.LineChartColumn("Últimas 52 semanas", width="medium"),
+        },
+    )
+    st.download_button("Exportar visão do portfólio (Excel)", services.to_excel({"Portfolio": port.drop(columns="Tendência")}), "portfolio.xlsx",
+                       icon=":material/download:", type="primary")

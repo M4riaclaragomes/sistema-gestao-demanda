@@ -1,0 +1,35 @@
+[server]
+headless = true
+runOnSave = true
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+
+[theme]
+base = "light"
+primaryColor = "#4F46E5"
+backgroundColor = "#F6F7FB"
+secondaryBackgroundColor = "#EEF0F7"
+textColor = "#1E293B"
+linkColor = "#4F46E5"
+borderColor = "#E5E7EF"
+showWidgetBorder = true
+baseRadius = "0.75rem"
+buttonRadius = "0.65rem"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap, sans-serif"
+headingFont = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@600;700;800&display=swap, sans-serif"
+baseFontSize = 15
+metricValueFontWeight = 750
+chartCategoricalColors = ["#4F46E5", "#14B8A6", "#F59E0B", "#EC4899", "#0EA5E9", "#8B5CF6", "#EF4444", "#22C55E"]
+greenColor = "#14B8A6"
+violetColor = "#4F46E5"
+
+[theme.sidebar]
+backgroundColor = "#0F172A"
+secondaryBackgroundColor = "#1E293B"
+textColor = "#E2E8F0"
+borderColor = "#1E293B"
+primaryColor = "#818CF8"

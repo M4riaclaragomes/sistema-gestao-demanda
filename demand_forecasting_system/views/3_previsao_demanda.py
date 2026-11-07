@@ -1,126 +1,102 @@
-import streamlit as st
-import plotly.graph_objects as go
+import numpy as np
 import pandas as pd
-import os
-import sys
+import plotly.graph_objects as go
+import streamlit as st
 
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PARENT_DIR = os.path.abspath(os.path.join(CURRENT_DIR, '..'))
-if PARENT_DIR not in sys.path:
-    sys.path.append(PARENT_DIR)
+from src import services, ui
 
-from src.eda import ExploratoryDataAnalysis
-from src.forecasting import ForecastEngine
+ui.hero(
+    "Previsão de demanda",
+    "Projete o futuro de cada produto com 7 modelos estatísticos. O sistema recomenda o método com melhor "
+    "desempenho no backtesting e exibe faixas de confiança para apoiar decisões de estoque.",
+    eyebrow="Módulo 03 · Planejamento",
+)
+df = ui.require_data()
+skus = sorted(df["sku"].unique())
 
-def render():
-    st.title("📈 Módulo 3: Previsão de Demanda")
-    st.markdown("Cálculo estatístico do futuro baseado no histórico limpo.")
+with st.container(border=True):
+    c1, c2, c3, c4 = st.columns([2, 2.2, 2.8, 1.4], vertical_alignment="bottom")
+    sku = c1.selectbox("Produto (SKU)", skus, key="prev_sku")
+    freq_label = c2.segmented_control("Granularidade", list(services.FREQS), default="Mensal", key="prev_freq") or "Mensal"
+    freq = services.FREQS[freq_label]
+    h = c3.slider(f"Horizonte ({services.UNIT[freq]})", 1, services.MAX_H[freq], services.DEFAULT_H[freq], key=f"prev_h_{freq}")
+    conf = c4.segmented_control("Confiança", ["80%", "95%"], default="80%", key="prev_conf") or "80%"
 
-    if 'df_dados' not in st.session_state or st.session_state['df_dados'] is None:
-        st.warning("⚠️ Nenhuma base de dados encontrada. Por favor, volte ao Módulo 1 e carregue os dados.")
-        return
+series = services.series_for(df, sku, freq)
+if len(series) < 6:
+    st.error("Histórico insuficiente para previsões estatísticas (mínimo de 6 períodos nessa granularidade).", icon=":material/error:")
+    st.stop()
 
-    df = st.session_state['df_dados']
-    df.columns = [c.lower() for c in df.columns]
-    
-    eda = ExploratoryDataAnalysis(df)
+with st.spinner("Ajustando modelos estatísticos…"):
+    resultados = services.run_models(series, h, services.SEASON[freq])
+    recomendado, ranking = services.best_model(series, freq)
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        sku_list = df['sku'].unique()
-        sku = st.selectbox("Selecione o SKU para prever:", sku_list)
-    with col2:
-        freq_map = {"Diária": "D", "Semanal": "W", "Mensal": "ME"}
-        freq = st.selectbox("Frequência da Previsão:", list(freq_map.keys()), index=2)
-        freq_code = freq_map[freq]
-    with col3:
-        h = st.number_input("Horizonte (Quantos períodos para frente?):", min_value=1, max_value=365, value=12)
+modelos = list(resultados)
+padrao = recomendado if recomendado in modelos else modelos[0]
+opcoes = {m: (f"★ {m}" if m == recomendado else m) for m in modelos}
+modelo = st.pills("Modelo estatístico", modelos, default=padrao, format_func=lambda m: opcoes[m], key=f"prev_model_{sku}_{freq}") or padrao
+st.caption(f":material/info: {services.MODEL_INFO.get(modelo, '')}" + (" · **Recomendado pelo backtesting.**" if modelo == recomendado else ""))
 
-    # 1. Quando o botão é clicado, ativamos a "memória" do Streamlit
-    if st.button("Gerar Previsão Matemática", type="primary"):
-        st.session_state['mostrar_grafico_aba3'] = True
-        st.session_state['parametros_aba3'] = (sku, freq_code, h)
+r = resultados[modelo]
+fc, sigma = r["forecast"], r["sigma"]
+z = 1.2816 if conf == "80%" else 1.96
+passos = np.sqrt(np.arange(1, h + 1))
+inf = np.maximum(0, fc - z * sigma * np.minimum(passos, 3))
+sup = fc + z * sigma * np.minimum(passos, 3)
+datas = services.future_index(series, h, freq)
 
-    # 2. Se a memória estiver ativa para estes exatos parâmetros, mostramos o gráfico
-    if st.session_state.get('mostrar_grafico_aba3') and st.session_state.get('parametros_aba3') == (sku, freq_code, h):
-        
-        # 3. Só calculamos a matemática pesada 1 vez e guardamos na memória. 
-        # Assim, trocar de modelo no selectbox fica instantâneo!
-        if 'resultados_aba3' not in st.session_state or st.session_state.get('parametros_calculados_aba3') != (sku, freq_code, h):
-            df_agg = eda.agregar_dados(sku, frequencia=freq_code)
-            
-            if len(df_agg) < 3:
-                st.error("Histórico insuficiente para previsões estatísticas (mínimo de 3 períodos).")
-                st.session_state['mostrar_grafico_aba3'] = False
-                return
-                
-            series = df_agg.set_index('data')['quantidade_vendida']
-            m = 12 if freq == "Mensal" else (7 if freq == "Diária" else 52)
-            
-            # Guarda as contas na sessão
-            st.session_state['resultados_aba3'] = ForecastEngine.run_all(series, h, m=m)
-            st.session_state['series_aba3'] = series
-            st.session_state['parametros_calculados_aba3'] = (sku, freq_code, h)
+ultimo = series.iloc[-h:].sum() if len(series) >= h else np.nan
+total = fc.sum()
+var = (total - ultimo) / ultimo * 100 if ultimo else np.nan
+wape = None
+if not ranking.empty and modelo in set(ranking["Modelo"]):
+    wape = float(ranking.loc[ranking["Modelo"] == modelo, "WAPE (%)"].iloc[0])
 
-        # Recupera os dados da memória
-        resultados = st.session_state['resultados_aba3']
-        series = st.session_state['series_aba3']
+k1, k2, k3, k4 = st.columns(4)
+k1.metric(f"Demanda prevista ({h} {services.UNIT[freq]})", ui.fmt_int(total), delta=ui.fmt_pct(var, signed=True) + " vs. período anterior" if not np.isnan(var) else None)
+k2.metric(f"Média por {services.UNIT_SING[freq]}", ui.fmt_num(fc.mean()))
+k3.metric(f"Faixa {conf} (total)", f"{ui.fmt_int(inf.sum())} – {ui.fmt_int(sup.sum())}")
+k4.metric("Acurácia no backtest", ui.fmt_pct(100 - wape, 1) if wape is not None and not np.isnan(wape) else "—",
+          help="100% − WAPE medido em teste cego sobre o final do histórico.")
 
-        if not resultados:
-            st.error("Erro ao calcular modelos estatísticos.")
-            return
+# ---------- Gráfico ----------
+hist = series.iloc[-max(h * 4, 24):]
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=list(datas) + list(datas[::-1]), y=list(sup) + list(inf[::-1]), fill="toself", fillcolor="rgba(20,184,166,.14)",
+                         mode="lines", line=dict(width=0), name=f"Intervalo {conf}", hoverinfo="skip"))
+fig.add_trace(go.Scatter(x=hist.index, y=hist.values, name="Histórico", mode="lines", line=dict(color="#334155", width=2)))
+if r["fit"] is not None:
+    fit = r["fit"].loc[hist.index]
+    fig.add_trace(go.Scatter(x=fit.index, y=fit.values, name="Ajuste do modelo", mode="lines", line=dict(color="#F59E0B", width=1.6, dash="dot"), visible="legendonly"))
+fig.add_trace(go.Scatter(x=[hist.index[-1], *datas], y=[hist.values[-1], *fc], name=f"Previsão · {modelo}", mode="lines+markers",
+                         line=dict(color=ui.ACCENT, width=3), marker=dict(size=6, line=dict(color="#fff", width=1.5))))
+fig.add_vline(x=hist.index[-1], line=dict(color="#CBD5E1", width=1, dash="dash"))
+fig.add_annotation(x=hist.index[-1], y=1, yref="paper", text="início da previsão", showarrow=False, xanchor="left", xshift=6, font=dict(size=11, color=ui.MUTED))
+fig.update_layout(yaxis_title="Quantidade")
+ui.chart(fig, height=460)
 
-        st.markdown("---")
-        st.subheader(f"📊 Projeção para {sku}")
-        
-        modelos_disponiveis = list(resultados.keys())
-        idx_padrao = modelos_disponiveis.index('Holt-Winters') if 'Holt-Winters' in modelos_disponiveis else 0
-        
-        # Como o selectbox agora está fora do botão, interagir com ele não quebra a tela!
-        modelo_selecionado = st.selectbox("Selecione o Modelo Estatístico:", modelos_disponiveis, index=idx_padrao)
-        
-        fit, fcast = resultados[modelo_selecionado]
-        
-        fig = go.Figure()
-        
-        fig.add_trace(go.Scatter(
-            x=series.index, y=series.values, mode='lines+markers', 
-            name='Demanda Real (Histórico)', line=dict(color='black', width=2)
-        ))
-        
-        if fit is not None:
-            fig.add_trace(go.Scatter(
-                x=series.index, y=fit, mode='lines', 
-                name='Ajuste Matemático', line=dict(dash='dot', color='orange', width=2),
-                visible='legendonly'
-            ))
-        
-        last_date = series.index[-1]
-        future_dates = pd.date_range(start=last_date, periods=h+1, freq=freq_code)[1:]
-        
-        fig.add_trace(go.Scatter(
-            x=future_dates, y=fcast, mode='lines+markers', 
-            name=f'Previsão ({modelo_selecionado})', line=dict(color='green', width=3)
-        ))
-        
-        fig.update_layout(
-            hovermode="x unified",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            margin=dict(l=0, r=0, t=50, b=0)
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        
-        with st.expander("📖 Entenda os Modelos Estatísticos"):
-            st.markdown("""
-            * **Naive (Ingênuo):** Assume que o futuro será igual ao último período.
-            * **Média Móvel:** Suaviza picos e quedas. Funciona bem para perfis altamente estáveis.
-            * **SES:** Dá mais peso aos dados recentes e esquece o passado distante.
-            * **Holt:** Identifica se o produto tem uma tendência clara de subida ou descida.
-            * **Holt-Winters:** Identifica tendência E sazonalidade (ex: vende mais no Natal).
-            * **Regressão:** Cria uma linha reta matemática baseada em todo o histórico.
-            * **Croston:** Algoritmo especial para itens intermitentes e peças de reparo.
-            """)
-    else:
-        # Se você alterar o produto ou a frequência antes de clicar no botão novamente, ele fecha o gráfico antigo por segurança
-        if 'mostrar_grafico_aba3' in st.session_state:
-            st.session_state['mostrar_grafico_aba3'] = False
+# ---------- Tabela e exportação ----------
+tab_df = pd.DataFrame({"Período": datas, "Previsão": np.round(fc, 0), f"Limite inferior ({conf})": np.round(inf, 0), f"Limite superior ({conf})": np.round(sup, 0)})
+c1, c2 = st.columns([3, 1], gap="medium")
+with c1:
+    with st.expander("Tabela da previsão", icon=":material/table:", expanded=False):
+        st.dataframe(tab_df, hide_index=True, width="stretch",
+                     column_config={"Período": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                                    "Previsão": st.column_config.NumberColumn(format="localized")})
+with c2:
+    st.download_button("Exportar Excel", services.to_excel({"Previsao": tab_df}), f"previsao_{sku}_{freq_label.lower()}.xlsx",
+                       icon=":material/download:", type="primary", width="stretch")
+    st.download_button("Exportar CSV", tab_df.to_csv(index=False).encode("utf-8"), f"previsao_{sku}.csv", "text/csv", icon=":material/csv:", width="stretch")
+
+with st.expander("Comparar todos os modelos neste horizonte", icon=":material/stacked_line_chart:"):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=hist.index, y=hist.values, name="Histórico", line=dict(color="#334155", width=2)))
+    for i, (nome, res) in enumerate(resultados.items()):
+        fig.add_trace(go.Scatter(x=datas, y=res["forecast"], name=nome, mode="lines",
+                                 line=dict(width=3 if nome == modelo else 1.6, color=ui.PALETTE[i % len(ui.PALETTE)])))
+    ui.chart(fig, height=380, key="prev_all")
+
+with st.expander("Entenda os modelos", icon=":material/school:"):
+    for nome, desc in services.MODEL_INFO.items():
+        st.markdown(f"- **{nome}** — {desc}")
+    st.caption("As faixas de confiança são estimadas a partir do desvio-padrão dos resíduos do ajuste no histórico.")
